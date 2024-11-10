@@ -1,0 +1,1351 @@
+---
+title: "LA COPUS observations"
+output:
+  html_document:
+    df_print: paged
+---
+
+Load [most] packages needed during the rest of the r scripts. Please check that you have installed all of these packages (e.g,. install.packages('xyz')) before running the rest of this script.
+
+```{r}
+library(kableExtra)
+library(ggplot2)
+library(ggthemes)
+library(ggExtra)
+library(gridExtra)
+```
+
+Table 1. Codes for student, Learning Assistant, and instructor behaviors using the extended COPUS Protocol. Student and instructor codes were developed by Smith, Jones (71) and collapsed codes were identified by Smith, Vinson (70). Learning Assistant codes were extended based on equivalent student and instructor codes. 
+
+```{r}
+codes <- read.csv('COPUS_codes.csv')
+#codes$Source <- ifelse(codes$Group=='Student'|codes$Group=='Instructor', 'Smith et al., 2013', 'Modified')
+codes$Collapsed <- c('Student Receiving', 
+                     'Student Working',
+                     'Student Working',
+                     'Student Working',
+                     'Student Working',
+                     'Student Talking to Class', 
+                     'Student Talking to Class', 
+                     'Student Talking to Class', 
+                     'Student Working', 
+                     'Student Talking to Class',
+                     'Student Working', 
+                     'Student Other', 
+                     'Student Other', 
+                     'Instructor Presenting', 
+                     'Instructor Presenting', 
+                     'Instructor Guiding', 
+                     'Instructor Guiding', 
+                     'Instructor Guiding', 
+                     'Instructor Guiding', 
+                     'Instructor Guiding', 
+                     'Instructor Guiding', 
+                     'Instructor Presenting', 
+                     'Instructor Administration', 
+                     'Instructor Other', 
+                     'Instructor Other', 
+                     'LA Receiving', 
+                     'LA Presenting',
+                     'LA Presenting',
+                     'LA Guiding',
+                     'LA Guiding', 
+                     'LA Guiding',
+                     'LA Guiding', 
+                     'LA Administration',
+                     'LA Administration',
+                     'LA Administration', 
+                     'LA Other',
+                     'LA Other')
+codes.sorted <- codes[order(codes$Collapsed, decreasing = T),]
+tab <- tableGrob(codes.sorted, theme = ttheme_minimal(), rows = NULL)
+ggsave("Code Table.png", tab, width=12,height=12, bg = "white", limitsize = F)
+```
+
+```{r}
+cl.id <- read.csv('Cluster profiles.csv') #median from Stains et al Supplemental 
+cl.id <- cl.id[,c('Cluster',sort(colnames(cl.id[-1])))]
+la.id <- codes$Code[which(codes$Group=='Learning Assistant')]
+```
+
+Import Confidential COPUS Data
+```{r eval = FALSE, echo = FALSE}}
+#load("5-10 env.RData")
+
+course_metadata <- read.csv('course_metadata.csv')
+temp.confidential <- read.csv('COPUS_import.csv')
+cl.id <- read.csv('Cluster profiles.csv') #median from Stains et al Supplemental 
+cl.id <- cl.id[,c('Cluster',sort(colnames(cl.id[-1])))]
+la.id <- codes$Code[which(codes$Group=='Learning Assistant')]
+
+confidential <- temp.confidential[c(61,2:41,54:58)]
+#Check courses for LA Codes to determine if they have LAs
+LA.columns <- grep('LA',colnames(confidential))
+#find unique courses that have have any LA observation
+LA.instructors <- unique(confidential$Course.ID[which(rowSums(confidential[la.id])!=0)])
+keep.rows <- which(confidential$Course.ID  %in% LA.instructors)
+LA <- confidential[keep.rows,]
+
+#Save confidential file
+LA.confidential <- LA
+write.csv(LA.confidential, 'LA.confidential.csv')
+
+#Save de-identified file
+LA.deidentified <- LA
+LA.deidentified$ID <- paste("Unique Class Period",as.numeric(as.factor(LA.deidentified$ID)))
+LA.deidentified$Course.ID <- paste("Course",as.numeric(as.factor(LA.deidentified$Course.ID)))
+LA.deidentified$Instructor <- paste("Instructor",as.numeric(as.factor(LA.deidentified$Instructor)))
+LA.deidentified$Year <- paste("Year",as.numeric(as.factor(LA.deidentified$Year)))
+LA.deidentified$Date <- paste("Date",as.numeric(as.factor(LA.deidentified$Date)))
+LA.deidentified$Course[which(LA.deidentified$Course!="")] <- paste("Course",as.numeric(as.factor(LA.deidentified$Course[which(LA.deidentified$Course!="")])))
+
+write.csv(LA.deidentified, 'LA.deidentified.csv')
+```
+
+
+
+
+Create composite variables  
+```{r}
+LA.courses <- read.csv('LA.deidentified.csv')
+#LA composite actions
+
+#If any of the LAs are lecturing, posing questions to students (unclear if small groups or whole class), answering questions to the whole class, or writing on the board 
+LA.courses$LA.Presenting <-
+  ifelse(rowSums(LA.courses[c('LA.Lec', 'LA.RtW')]) == 0, 0, 1) #no LA D/V code recorded
+#If any of the LAs are moving through the class or working one-on-one with students/groups
+LA.courses$LA.Guiding <-
+  ifelse(rowSums(LA.courses[c('LA.PQ', 'LA.AnQ', 'LA.MG', 'LA.1o1')]) == 0, 0, 1)#No LA Fup, CQ
+#If any of the LAs are doing administrative work or talking with the instructional team
+LA.courses$LA.Admin <-
+  ifelse(rowSums(LA.courses[c('LA.Adm', 'LA.LaLa', 'LA.LaI')]) == 0, 0, 1)
+#If any of the LAs are doing something else
+LA.courses$LA.Other <-
+  ifelse(rowSums(LA.courses[c('LA.O', 'LA.W')]) == 0, 0, 1)
+
+LA.courses$LA.didactic <-
+  ifelse(rowSums(LA.courses[c('LA.Lec', 'LA.RtW')]) == 0, 0, 1)
+LA.courses$LA.S.Interactive <-
+  ifelse(rowSums(LA.courses[c('LA.MG', 'LA.1o1')]) == 0, 0, 1)
+LA.courses$LA.Vicarious <-
+  ifelse(rowSums(LA.courses[c('LA.PQ', 'LA.AnQ')]) == 0, 0, 1)
+#If any of the LAs are admin tasks, talking with the instructor, or talking amongst other LAs
+
+#If all LAs are doing something else (e.g., Listening, Other)
+LA.courses$LA.inactive <-
+  ifelse(LA.courses$LA.didactic==1 | LA.courses$LA.Vicarious==1 | LA.courses$LA.Admin==1, 0, 1)
+
+
+#Student composite actions
+LA.courses$Receiving <-
+  ifelse(rowSums(LA.courses[c('S.L')]) == 0, 0, 1)
+LA.courses$S.Talking.to.class <-
+  ifelse(rowSums(LA.courses[c('S.SP','S.WC', 'S.SQ', 'S.AnQ')]) == 0, 0, 1)
+LA.courses$S.Working <-
+  ifelse(rowSums(LA.courses[c('S.Ind','S.CG', 'S.WG', 'S.OG', 'S.Prd', 'S.TQ')]) == 0, 0, 1)
+LA.courses$S.other <-
+  ifelse(rowSums(LA.courses[c('S.O', 'S.W')]) == 0, 0, 1)
+LA.courses$Only.Receiving <-
+  ifelse(LA.courses$Receiving == 1 & 
+                   LA.courses$S.Talking.to.class == 0 &
+                   LA.courses$S.Working == 0, 1, 0)
+LA.courses$S.Only.Talking.to.class <-
+  ifelse(LA.courses$Receiving == 0 & 
+                   LA.courses$S.Talking.to.class == 1 &
+                   LA.courses$S.Working == 0, 1, 0)
+LA.courses$S.Only.Working <-
+  ifelse(LA.courses$Receiving == 0 & 
+                   LA.courses$S.Talking.to.class == 0 &
+                   LA.courses$S.Working == 1, 1, 0)
+
+LA.courses$S.active <-
+  ifelse(rowSums(LA.courses[c('S.CG', 'S.WG', 'S.OG', 'S.Ind')]) == 0, 0, 1)
+LA.courses$S.interactive <-
+  ifelse(rowSums(LA.courses[c('S.CG', 'S.WG', 'S.OG')]) == 0, 0, 1)
+LA.courses$S.vicarious.interactive <-
+  ifelse(rowSums(LA.courses[c('S.SP','S.Prd','S.WC', 'S.SQ', 'S.AnQ')]) == 0, 0, 1)
+
+LA.courses$S.passive <-
+  ifelse(LA.courses$S.active==1 | LA.courses$S.interactive==1 | LA.courses$S.vicarious.interactive== 1 | LA.courses$S.other==1 , 0, 1) #we'll need to describe passive this way since "listening" is potentially associated with active, interactive, or vicarious interactive
+
+#Instructor composite actions
+#If any of the Instructors are lecturing, posing questions to students (unclear if small groups or whole class), answering questions to the whole class, or writing on the board
+LA.courses$I.Presenting <-
+  ifelse(rowSums(LA.courses[c('I.Lec', 'I.RtW', 'I.D.V')]) == 0, 0, 1)
+LA.courses$I.Guiding <-
+  ifelse(rowSums(LA.courses[c('I.PQ', 'I.AnQ', 'I.MG', 'I.1o1', 'I.Fup', 'I.CQ')]) == 0, 0, 1)
+LA.courses$I.S.Interactive <-
+  ifelse(rowSums(LA.courses[c('I.MG', 'I.1o1')]) == 0, 0, 1)
+LA.courses$I.didactic <-
+  ifelse(rowSums(LA.courses[c('I.Lec', 'I.RtW', 'I.D.V')]) == 0, 0, 1)
+LA.courses$I.vicarious <-
+  ifelse(rowSums(LA.courses[c('I.PQ', 'I.AnQ', 'I.Fup', 'I.CQ')]) == 0, 0, 1)
+#If the instructor is doing admin tasks,  or talking with  LAs
+LA.courses$I.Admin <-
+  ifelse(rowSums(LA.courses[c('I.Adm', 'I.LaI')]) == 0, 0, 1)
+LA.courses$I.Other <-
+  ifelse(rowSums(LA.courses[c('I.O', 'I.W')]) == 0, 0, 1)
+```
+
+#Load stains datat
+```{r}
+library(readxl)
+#detach(package:plyr)
+
+library(dplyr)
+stains.data <-
+  read_xlsx('Stains - Anatomy of STEM teaching - Science - Data S1.xlsx', na = "NA")
+#create temp course ID for missing data based on Instructor ID
+stains.data$`Course ID`[is.na(stains.data$`Course ID`)] <- paste0(9,stains.data$`Instructor ID`)
+stains.data$type <- ifelse(stains.data$Cluster == 1 | stains.data$Cluster == 2, "Didactic", 
+                          ifelse(stains.data$Cluster == 3 | stains.data$Cluster == 4, "Interactive Lecture", 
+                                 ifelse(stains.data$Cluster == 5 | stains.data$Cluster == 6 | stains.data$Cluster == 7,
+                                        "Student Centered", "Check Logic")))
+stains.data$type.color <- as.numeric(as.factor(stains.data$type))
+type.colors <- c("#FD7239", "#FFD11B" ,"#00AFBB") #Didactic Interactive Lecture Student Centered   
+
+
+stains.summary <- 
+  stains.data %>%
+  group_by(Cluster) %>%
+  summarise(
+    Cluster = paste0('C',unique(Cluster)),
+    I.1o1 = mean(ONE_O_ONE) / 100,
+    I.Adm = mean(ADMIN) / 100,
+    I.AnQ = mean(T_ANQ) / 100,
+    I.CQ = mean(CQ) / 100,
+    I.D.V = mean(DV) / 100,
+    I.Fup = mean(FUP) / 100,
+    I.Lec = mean(Lec) / 100,
+    I.MG = mean(MG) / 100,
+    I.O = mean(T_O) / 100,
+    I.PQ = mean(T_PQ) / 100,
+    I.RtW = mean(RTW) / 100,
+    I.W = mean(T_W) / 100,
+    S.AnQ = mean(S_Anq) / 100,
+    S.CG = mean(CG) / 100,
+    S.Ind = mean(Ind) / 100,
+    S.L = mean(L) / 100,
+    S.O = mean(S_O) / 100,
+    S.OG = mean(OG) / 100,
+    S.Prd = mean(PRD) / 100,
+    S.SP = mean(SP) / 100,
+    S.SQ = mean(SQ) / 100,
+    S.TQ = mean(TQ) / 100,
+    S.W = mean(S_W) / 100,
+    S.WC = mean(WC) / 100,
+    S.WG = mean(WG) / 100,
+  )
+stains.summary <- as.data.frame(stains.summary)
+stains.summary$I.O[is.na(stains.summary$I.O)] <- 0
+#if error go back and detatch dplyr
+```
+Create Stains radar plots
+- load Stains data (mean of variables from each cluster) and plot published profiles
+
+```{r}
+#####
+#Load libraries
+#####
+library(tidyverse)
+#devtools::install_github("ricardo-bion/ggradar")
+library(ggplot2)
+library(plyr)
+library(gridExtra)
+library(tidyverse)
+#devtools::install_github("ricardo-bion/ggradar", 
+ #                         dependencies = TRUE)
+library(ggradar)
+
+
+# Put row names into  a column named group
+
+cluster.colors <- c("#FD7239","#CE3D02", "#FFD11B","#B48F00", "#00DFEE","#00AFBB", "#007F88")
+
+# Plotting student 1
+stains.radar.plot <- function(i=1, cluster.num=1, legend="Cluster Centroid", main='Main'){
+  clust <- stains.summary[i, ]
+  ggradar(
+    clust, 
+    values.radar = c("0.0", "0.5", "1.0"),
+    grid.min = 0, grid.mid = 0.5, grid.max = 1,
+    # Polygons
+    group.line.width = 1, 
+    group.point.size = 3,
+    group.colours = cluster.colors[cluster.num],
+    # Background and grid lines
+    background.circle.colour = "white",
+    gridline.mid.colour = "grey",
+    legend.position = "bottom",
+    legend.title= legend,
+    plot.title =  main,
+    legend.text.size = 10
+  )  
+}
+
+
+d <- stains.radar.plot(i=1:2, cluster.num=1:2, main = 'Didactic')
+i <- stains.radar.plot(i=3:4, cluster.num=3:4, main = 'Interactive Lecture')
+s <- stains.radar.plot(i=5:7, cluster.num=5:7, main = 'Student Centered')
+
+#grid.arrange(d,i,s, nrow=1)
+
+ggsave('stains-h.pdf', grid.arrange(d,i,s, nrow=1), width = 16, height = 6)
+ggsave('stains-h.png', grid.arrange(d,i,s, nrow=1), width = 16, height = 6,device = 'jpg', limitsize = F)
+ggsave('stains-v.png', grid.arrange(d,i,s, nrow=3), width = 6, height = 16,device = 'jpg', limitsize = F)
+
+
+```
+
+Identify cluster for class periods
+#Check on how we are selecting LA courses
+#We dont think Beck 2016 or Jones had LAs
+
+Highlight variation
+#within cluster category
+#within course
+#within course
+```{r}
+#Summarize COPUS percentages by class period
+cluster.summary.class <- LA.courses[c(c('ID', 'Course.ID'), colnames(cl.id[-1]))] %>%
+  group_by(ID, Course.ID) %>%
+  summarise_all(mean)
+
+#specify centroids
+centroids <- cl.id[-1]
+colnames(centroids) <- colnames(cl.id[-1])
+rownames(centroids) <- cl.id[,1]
+
+#Finds the cluster that is closest (euclidean distance in 25 dimensions) to a bootstrapped replicate of a course 
+low.dist <- sapply(1:nrow(cluster.summary.class), function(i){
+  x <- rbind(cluster.summary.class[i, colnames(cl.id[-1])], centroids)
+  dist(x)
+  val <- dist(x, diag = TRUE)[1:7]
+  cluster.id <- which(val==min(val))
+  cluster.id
+})
+
+#Add results to data frame
+cluster.summary.class$cluster.id <- low.dist
+#Name clusters based on Stains et al.
+cluster.summary.class$type <- ifelse(cluster.summary.class$cluster.id == 1 | cluster.summary.class$cluster.id == 2, "Didactic", 
+                          ifelse(cluster.summary.class$cluster.id == 3 | cluster.summary.class$cluster.id == 4, "Interactive Lecture", 
+                                 ifelse(cluster.summary.class$cluster.id == 5 | cluster.summary.class$cluster.id == 6 | cluster.summary.class$cluster.id == 7,
+                                        "Student Centered", "Check Logic")))
+cluster.summary.class$type.color <- as.numeric(as.factor(cluster.summary.class$type))
+type.colors <- c("#FD7239", "#FFD11B" ,"#00AFBB") #Didactic Interactive Lecture Student Centered   
+
+
+radar.plot <- function(r.id=1, legend="Class Period", main='Main', tf=T){
+  clust <- cluster.summary.class[r.id,c("ID",colnames(cl.id[-1]))]
+  clust$ID <- as.numeric(as.factor(clust$ID))
+  color <- cluster.summary.class$type.color[r.id]
+  ggradar(
+    clust, 
+    values.radar = c("0.0", "0.5", "1.0"),
+    grid.min = 0, grid.mid = 0.5, grid.max = 1,
+    # Polygons
+    group.line.width = 1, 
+    group.point.size = 3,
+    group.colours = type.colors[color],
+    # Background and grid lines
+    background.circle.colour = "white",
+    gridline.mid.colour = "grey",
+    legend.position = "bottom",
+    legend.title= legend,
+    plot.title =  main,
+    legend.text.size = 10,
+    plot.legend = tf
+  )  
+}
+
+p <- lapply(1:length(LA.instructors), function(i){
+ r.id <- which(cluster.summary.class$Course.ID==LA.instructors[i])
+jpeg(paste0("cluster plots/" , LA.instructors[i], ' cluster.jpg'), width = 3600, height = 3600, res = 600)
+ print(radar.plot(r.id = r.id, main = LA.instructors[i]))
+ dev.off()
+})
+
+
+ggsave('cluster plots/beyond.pdf',plot = do.call(grid.arrange,p), width = 40, height = 40, units='in',device = 'pdf', limitsize = F)
+ggsave('beyond.jpg',plot = do.call(grid.arrange,p), width = 40, height = 40, units='in',device = 'jpg', limitsize = F)
+
+```
+
+
+Compare % of LA courses to Stains paper
+Stains did not estimate the error for the % of courses with each Course profile (e.g., % didactic courses)
+We used a non-parametric method to estimate the % of courses with each Course profile
+We sampled 1 class period within each course and repeated this process 1000 times
+This is a quick and dirty way to approximate a course and is heavily influenced by the number of times a course was observed. However, we did not have sufficient information about the missing data to more accurately estimate the most common course profile for each course.
+
+Simulate variation for Stains paper
+```{r}
+library(dplyr)
+stains.data
+stains.data$Course.ID <- stains.data$`Course ID`
+set.seed(1)
+n<- 10000
+stains.course.summary <- t(replicate(n, {
+  new_df <- stains.data[c("Course.ID",'type')] %>% 
+  group_by(Course.ID) %>% 
+  slice_sample(n=1)
+xtabs(data= new_df, formula = ~ type)/length(unique(stains.data$Course.ID))*100
+}))
+
+quantile(stains.course.summary[,1], c(0.025,0.5, 0.975))
+quantile(stains.course.summary[,2], c(0.025,0.5, 0.975))
+quantile(stains.course.summary[,3], c(0.025,0.5, 0.975))
+detach(dplyr)
+library(plyr)
+
+stains.long <- gather(as.data.frame(stains.course.summary))
+stains.long$ID <- "North\nAmerica"
+
+```
+
+```{r}
+library(dplyr)
+  new_df <- cluster.summary.class[c('Course.ID','type')]
+stains <- xtabs(data= new_df, formula = ~ type)/nrow(new_df)
+
+set.seed(1)
+n<- 10000
+course.summary <- t(replicate(n, {
+  new_df <- cluster.summary.class[c('Course.ID','type')] %>% 
+  group_by(Course.ID) %>% 
+  slice_sample(n=1)
+xtabs(data= new_df, formula = ~ type)/length(unique(cluster.summary.class$Course.ID))*100
+}))
+
+quantile(course.summary[,1], c(0.025,0.5, 0.975))
+quantile(course.summary[,2], c(0.025,0.5, 0.975))
+quantile(course.summary[,3], c(0.025,0.5, 0.975))
+
+
+quantile(stains.course.summary[,1]-course.summary[,1], c(0.025,0.5, 0.975))
+
+
+quantile(stains.course.summary[,2]-course.summary[,2], c(0.025,0.5, 0.975))
+quantile(stains.course.summary[,3]-course.summary[,3], c(0.025,0.5, 0.975))
+
+n.stains <- length(unique(stains.data$Course.ID))
+n.LA <- length(LA.instructors)
+
+d.or <- ((stains.course.summary[,1]*n.stains/100)/
+          (course.summary[,1]*n.LA/100))/
+  (((100-stains.course.summary[,1])*n.stains/100)/
+          ((100-course.summary[,1])*n.LA/100))
+il.or <- ((stains.course.summary[,2]*n.stains/100)/
+          (course.summary[,2]*n.LA/100))/
+  (((100-stains.course.summary[,2])*n.stains/100)/
+          ((100-course.summary[,2])*n.LA/100))
+
+sc.or <- ((stains.course.summary[,3]*n.stains/100)/
+          (course.summary[,3]*n.LA/100))/
+  (((100-stains.course.summary[,3])*n.stains/100)/
+          ((100-course.summary[,3])*n.LA/100))
+
+
+
+quantile(d.or, c(0.025,0.5, 0.975))
+
+quantile(il.or, c(0.025,0.5, 0.975))
+quantile(sc.or, c(0.025,0.5, 0.975))
+
+
+
+detach(dplyr)
+library(plyr)
+
+long <- gather(as.data.frame(course.summary))
+long$ID <- "Learning\nAssistant"
+
+comb.long <- rbind(stains.long, long)
+
+png('percent of courses.png', width = 5000, height = 2600, res=600)
+par(mar=c(5,4,2,1))
+boxplot(comb.long$value ~ comb.long$ID*comb.long$key , ylim=c(0,100), ylab = '% of courses', xlab = NA , col= rep(type.colors, each = 2), names = c("LA-Supported\nSTEM", "North\nAmerican\nSTEM", "LA-Supported\nSTEM", "North\nAmerican\nSTEM", "LA-Supported\nSTEM", "North\nAmerican\nSTEM"), at = c(1, 1.8, 3.1, 3.9, 5.2, 6))
+axis(1, at = c(1.4, 3.5, 5.7), labels = c("Didactic","Interactive Lecture","Student Centered"), tick = F, pos = -20, cex.axis = 1)
+dev.off()
+unique(comb.long$key)
+library(effectsize)
+d.lm <- glm(value ~ ID , data = comb.long[which(comb.long$key=="Didactic"),])
+summary(d.lm)
+effectsize(d.lm)
+il.lm <- glm(value ~ ID , data = comb.long[which(comb.long$key=="Interactive Lecture"),])
+summary(il.lm)
+effectsize(il.lm)
+
+sc.lm <- glm(value ~ ID , data = comb.long[which(comb.long$key=="Student Centered"),])
+summary(sc.lm)
+effectsize(sc.lm)
+
+
+stains.lm <- glm(value ~ 1 + key:ID , data = comb.long)
+summary(stains.lm)
+effectsize(stains.lm)
+
+  comb.long %>% 
+  group_by(key, ID) %>%
+  summarise(mean = round(mean(value),2), lcl = round(quantile(value, 0.025),2), ucl = round(quantile(value, 0.975),2))
+
+  #compare distribution of sampling intensity
+stains.n.samp <- 
+  stains.data %>%
+  group_by(Course.ID) %>%
+  summarise(n = n())
+la.n.samp <- 
+  course.summary %>%
+  group_by(Course.ID) %>%
+  summarise(n = n())
+
+```
+
+
+```{r}
+type1 <- c('ivory', '#FEA885','#FE966b','#FD8452', '#FD7239','#FD6020', '#FC4E07',"#e74502") #red
+type2 <- c('ivory', '#ffe065','#ffdb4b','#ffd632', '#ffd118','#fecb00', '#e4b700',"#cba200") #yellow
+type3 <- c('ivory', '#08efff','#00dfee','#00c7d5', '#00afbb','#0097a2', '#007f88',"#00676f") #blue
+breaks <- c(0, 1, 15, 30, 45, 60, 75, 90, 100)
+
+summary.class <- LA.courses[c(c('ID', 'Course.ID'), colnames(cl.id[-1]), la.id)] %>%
+  group_by(ID, Course.ID) %>%
+  summarise_all(mean)
+
+summary.class$type <- cluster.summary.class$type
+
+library(gplots)
+library(grid)
+library(gridGraphics)
+library(gridExtra)
+
+png('passive.class.png', width = 4.25, height = 4.25, units = 'in', res = 600)
+heatmap.2(x=as.matrix(summary.class[which(summary.class$type=="Didactic"),la.id])*100,
+          Colv = la.id,
+          dendrogram = 'none',
+        labRow = NA, 
+        col=type1,
+        trace = 'none',
+        density.info = 'none',
+        keysize = 1.5,
+        cexCol = 1.25,
+        margins = c(8, 2),
+        lhei = c(1,3.25),
+        lwid = c(1,2.5),
+        key.par = list(mar=c(2.5,0.5,2.5,0.5)),
+        key.xlab = '% of class session',
+        ylab = paste0("Unique class sessions (n = ", sum(summary.class$type=="Didactic"), ')'),
+        xlab = "LA behaviors during \ndidactic class sessions",
+        breaks = breaks,
+        #main = 'Didactic Class Periods'
+        )
+dev.off()
+
+png('interactive.class.png', width = 4.25, height = 4.25, units = 'in', res = 600)
+heatmap.2(x=as.matrix(summary.class[which(summary.class$type=="Interactive Lecture"),la.id])*100,
+          Colv = la.id,
+          dendrogram = 'none',
+        labRow = NA, 
+        col=type2,
+        trace = 'none',
+        density.info = 'none',
+        keysize = 1.5,
+        cexCol = 1.25,
+        margins = c(8, 2),
+        lhei = c(1,3.25),
+        lwid = c(1,2.5),
+        key.par = list(mar=c(2.5,0.5,2.5,0.5)),
+        key.xlab = '% of class session',
+        ylab = paste0("Unique class sessions (n = ", sum(summary.class$type=="Interactive Lecture"), ')'),
+        xlab = "LA behaviors during \ninteractive lecture class sessions",
+        breaks = breaks,
+        #main = 'Interactive Lecture Class Periods'
+        )
+dev.off()
+
+png('stu.centered.class.png', width = 4.25, height = 4.25, units = 'in', res = 600)
+heatmap.2(x=as.matrix(summary.class[which(summary.class$type=="Student Centered"),la.id])*100,
+          Colv = la.id,
+          dendrogram = 'none',
+        labRow = NA, 
+        col=type3,
+        trace = 'none',
+        density.info = 'none',
+        keysize = 1.5,
+        cexCol = 1.25,
+        margins = c(8, 2),
+        lhei = c(1,3.25),
+        lwid = c(1,2.5),
+        key.par = list(mar=c(2.5,0.5,2.5,0.5)),
+        key.xlab = '% of class session',
+        ylab = paste0("Unique class sessions (n = ", sum(summary.class$type=="Student Centered"), ')'),
+        xlab = "LA behaviors during \nstudent-centered class sessions",
+        breaks = breaks,
+        #main = 'Student Centered Class Periods'
+        )
+dev.off()
+
+  
+#the cluster names are representative of the class period but this does not mean that this is exclusively occurring
+#students receive instruction and internalize the information 
+# to me passive means that students arn't doing anything but listen to instruction
+
+```
+```{r}
+library(pheatmap)
+pheatmap(mat = as.matrix(summary.class[which(summary.class$type=="Student Centered"),la.id]),
+         color = type3,
+         border_color = 'black', 
+         cutree_rows = 1, 
+         cluster_cols = F, 
+         gaps_col = c(1,3,7,10)
+         )
+```
+
+```{r}
+la.summary.class <- LA.courses[c(c('ID', 'Course.ID'), la.id)] %>%
+  group_by(ID, Course.ID) %>%
+  summarise_all(mean)
+
+la.summary.class$cluster.type <- cluster.summary.class$type 
+la.summary.class$type.color <- cluster.summary.class$type.color
+type.colors <- c("#FD7239", "#FFD11B" ,"#00AFBB") #Didactic Interactive Lecture Student Centered   
+
+LA.radar.plot <- function(r.id=1, legend="Class Period", main='Main', tf=T){
+  clust <- la.summary.class[r.id,c("ID",la.id)]
+  clust$ID <- as.numeric(as.factor(clust$ID))
+  color <- la.summary.class$type.color[r.id]
+  ggradar(
+    clust, 
+    values.radar = c("0.0", "0.5", "1.0"),
+    grid.min = 0, grid.mid = 0.5, grid.max = 1,
+    # Polygons
+    group.line.width = 1, 
+    group.point.size = 3,
+    group.colours = type.colors[color],
+    # Background and grid lines
+    background.circle.colour = "white",
+    gridline.mid.colour = "grey",
+    legend.position = "bottom",
+    legend.title= legend,
+    plot.title =  main,
+    legend.text.size = 10,
+    plot.legend = tf
+  )  
+}
+
+lapply(1:length(LA.instructors), function(i){
+ r.id <- which(la.summary.class$Course.ID==LA.instructors[i])
+jpeg(paste0("LA cluster plots/" , LA.instructors[i], ' cluster.jpg'), width = 3600, height = 3600, res = 600)
+ print(LA.radar.plot(r.id = r.id, main = LA.instructors[i]))
+ dev.off()
+})
+```
+
+```{r}
+
+
+
+la.long <- gather(data=la.summary.class[-2], key = 'Code', value = 'Percent', la.id)
+la.long$Code <- ordered(la.long$Code, levels =c(la.id))
+la.long$group<-cut(as.numeric(la.long$Code),breaks=c(0,1,3,7,10, 12),c('LA \nReceiving','LA \nPresenting', "LA \nGuiding", "LA \nAdministration", 'LA \nOther'))
+  
+box <- ggplot(data = la.long, aes(x=Code, y=Percent *100, fill=cluster.type))+
+  geom_boxplot()+
+  #geom_point()+
+  scale_fill_manual(values = type.colors, name = "Instructional Styles")+
+  facet_grid( ~ group , scale='free', space = 'free')+
+  ylab("Percent of class period (%)") + 
+  theme_par()+
+  theme(plot.margin =margin(2,2,2,2), 
+        legend.position="top", 
+        axis.text = element_text(size = 18),
+        axis.title = element_text(size = 20),
+        legend.text = element_text(size = 20),
+        legend.title = element_text(size = 20),
+        strip.text = element_text(size = 18))
+
+ggsave(paste0("LA COPUS boxplot.png"), box, width = 14, height = 6, device='png', limitsize = F)
+```
+
+
+```{r}
+library(cowplot)
+lapply(1:length(LA.instructors), function(i){
+r.id.c <- which(la.summary.class$Course.ID==LA.instructors[i])
+r.id.la <- which(la.summary.class$Course.ID==LA.instructors[i])
+
+cl <-radar.plot(r.id = r.id.c, main = 'Instructional Styles' , tf=F)
+la <- LA.radar.plot(r.id = r.id.la, main = 'LA Profile', tf=F)
+legend <- get_legend(cl + 
+                       theme(legend.position = 'right') +
+                       guides(color=guide_legend(title= "Class Period")))
+
+combo <- plot_grid(cl,la, legend, nrow=1, rel_widths=c(1,1,.4))
+
+ggsave(paste0("combined cluster plots/" , LA.instructors[i], ' cluster.jpg'), combo, width = 16, height = 8, limitsize = F)
+})
+
+
+```
+PLot the duration of group work
+-boxplot of lenght for each class period
+```{r}
+compare.time <- function(code1=LA.courses$S.Only.Talking.to.class,
+                         code2=LA.courses$I.Guiding,
+                         class.period = LA.courses$ID,
+                         code1.lab = "Length of continuous active learning by students (min)",
+                         code2.lab = "LA Interaction with students \nduring periods of active learning (min)",
+                         grad.col = type1){
+filter <- data.frame(code1, class.period)
+rle.list <- lapply(1:length(unique(filter$class.period)), function(c){
+  rle(filter$code1[which(filter$class.period==unique(filter$class.period)[c])])  
+  })  #Compute the lengths and values of runs of equal values in a vector
+
+rle.code1 <- do.call(rbind.data.frame, rle.list)
+
+code1.df <- data.frame(rle.code1[2],rle.code1[1]) #reorder and create dataframe
+code1.df$row <- as.numeric(rownames(code1.df)) #add row numbers for each value
+rle.segment <- rle.code1 #create template for code 2
+rle.segment$values <- code1.df$row #overwrite values with row numbers (for future alignment) 
+code1.segment <- inverse.rle(rle.segment) #reverse the rle to mirror COPUS format
+long.compare <- as.data.frame(xtabs(code2 ~ code1.segment))
+class.segment <- data.frame(segment=code1.segment, class=class.period)
+class.compare <- class.segment %>% group_by(segment) %>% count()
+compare.df <<- data.frame(segment.id=code1.df$row,
+                         code1.value=code1.df$values,
+                         code1.lenght=code1.df$lengths,
+                         code2.length=long.compare$Freq,
+                         code1.min = code1.df$lengths * 2,
+                         code2.min=long.compare$Freq * 2,
+                         percentage=long.compare$Freq/code1.df$lengths,
+                         class.period = class.compare$class)
+
+only.1 <<- compare.df[which(compare.df$code1.value==1),]
+
+
+p0 <- ggplot(only.1, aes(x=code1.min, y=code2.min)) +
+    geom_point() +
+    geom_smooth(method = 'glm')+
+    #geom_smooth()+
+    geom_abline(slope = 1, intercept = 0, linetype="dashed")+
+    xlab(code1.lab)+
+    ylab(code2.lab)+
+    xlim(0,max(c(only.1$code1.min, only.1$code2.min)))+
+    ylim(0,max(c(only.1$code1.min, only.1$code2.min)))+
+    theme(legend.position="none")+ 
+    theme_par()
+ 
+# with marginal histogram
+p1 <- ggMarginal(p0, type="histogram", binwidth = 2)
+
+#Identify slope of the model
+m1 <- summary(glm(data = only.1, formula = code2.min ~ code1.min))
+slope <- m1$coefficients[2,1:2]
+
+p2 <- ggplot(only.1, aes(x=code1.min, y= code2.min)) +
+  stat_bin_2d(binwid = max(only.1$code1.min)/2)+ 
+      geom_smooth(method = 'glm', color=grad.col[5])+
+    geom_abline(slope = 1, intercept = 0, linetype="dashed")+
+    xlab(code1.lab)+
+    ylab(code2.lab)+
+    xlim(-2,max(c(only.1$code1.min, only.1$code2.min))+2)+
+    ylim(-2,max(c(only.1$code1.min, only.1$code2.min))+2)+
+    scale_fill_gradient(low = grad.col[2],
+                          high = grad.col[8],
+                          space = "Lab",
+                          na.value = grad.col[1],
+                          guide = "colourbar",
+                          aesthetics = "fill")+
+    theme_par()+
+  theme(plot.margin = unit(c(.5,.5,.5,.5), "cm"))
+
+print(p2)
+#print(p1)
+#print(code1.lab)
+#print(code2.lab)
+#print(slope)
+}
+
+#Student Active Vs instructor interaction
+w.i <- compare.time(code1=LA.courses$S.Only.Working,
+                         code2=LA.courses$I.Guiding,
+                         code1.lab = NULL,
+                         code2.lab = "Duration of instructor \nguiding students (min)",
+                         grad.col = type3)
+w.i.data <- only.1
+w.i.data$stu <- "waiting"
+w.i.data$id <- "inst"
+
+#Student Active Vs LA/student interaction
+w.la <- compare.time(code1=LA.courses$S.Only.Working,
+                         code2=LA.courses$LA.Guiding,
+                         code1.lab = "Duration of students working (min)",
+                         code2.lab = "Duration of LAs \nguiding students (min)",
+                         grad.col = type3)
+w.la.data <- only.1
+w.la.data$stu <- "waiting"
+w.la.data$id <- "LA"
+
+w.comp <-  rbind(w.i.data, w.la.data)
+w.lm <- glm(formula = percentage ~ id + (1|segment.id), data = w.comp)
+summary(w.lm)
+
+#Student Active Vs Instructor interaction
+t.i <- compare.time(code1= LA.courses$S.Only.Talking.to.class,
+                         code2= LA.courses$I.Guiding,
+                         code1.lab = NULL,
+                         code2.lab = "Duration of instructor \nguiding students (min)",
+                         grad.col = type2)
+t.i.data <- only.1
+t.i.data$stu <- "talking"
+t.i.data$id <- "inst"
+
+#Student vicarious Vs Instructor interaction
+t.la <- compare.time(code1=LA.courses$S.Only.Talking.to.class,
+                         code2=LA.courses$LA.Guiding,
+                         code1.lab = "Duration of students talking to the class (min)",
+                         code2.lab = "Duration of LAs \nguiding students (min)",
+                         grad.col = type2)
+t.la.data <- only.1
+t.la.data$stu <- "talking"
+t.la.data$id <- "LA"
+
+t.comp <-  rbind(t.i.data, t.la.data)
+t.lm <- glm(formula = percentage ~ id + (1|segment.id), data = t.comp)
+summary(t.lm)
+
+#Student Active Vs Instructor interaction
+r.i <- compare.time(code1=LA.courses$Only.Receiving,
+                         code2=LA.courses$I.Presenting,
+                         code1.lab = NULL,
+                         code2.lab = "Duration of instructor \npresenting to students (min)",
+                         grad.col = type1)
+r.i.data <- only.1
+r.i.data$stu <- "receiving"
+r.i.data$id <- "inst"
+
+
+
+#Student passive Vs Instructor interaction
+r.la <- compare.time(code1=LA.courses$Only.Receiving,
+                         code2=LA.courses$LA.Presenting,
+                         code1.lab = "Duration of students receiving information (min)",
+                         code2.lab = "Duration of LAs \npresenting to students (min)",
+                         grad.col = type1)
+r.la.data <- only.1
+r.la.data$stu <- "receiving"
+r.la.data$id <- "LA"
+r.comp <-  rbind(r.i.data, r.la.data)
+
+r.lm <- glm(formula = percentage ~ id + (1|segment.id), data = r.comp)
+summary(r.lm)
+
+
+seg.2d <- plot_grid(r.i, t.i, w.i, r.la, t.la, w.la,
+                    labels = c("A", "B", "C"),
+                    ncol = 3, nrow = 2)
+ggsave(paste0("Segment 2d.png"), seg.2d, width = 12, height = 7, device='png', limitsize = F)
+
+
+
+```
+
+```{r}
+
+
+#Un-comment this code to explore data points
+#check row on only.1 enter in compare.df
+debug <- LA.courses[which(LA.courses$ID==compare.df$class.period[1632]),]
+
+hist(only.1$percentage)
+
+plot(only.1$code1.min, only.1$percentage)
+```
+
+```{r}
+compile.time <- function(code1=LA.courses$S.active){
+filter <- data.frame(code1=code1, class.period=LA.courses$ID)
+rle.list <- lapply(1:length(unique(filter$class.period)), function(c){
+  rle(filter$code1[which(filter$class.period==unique(filter$class.period)[c])])  
+  })  #Compute the lengths and values of runs of equal values in a vector
+
+rle.code1 <- do.call(rbind.data.frame, rle.list)
+
+code1.df <- data.frame(rle.code1[2],rle.code1[1]) #reorder and create dataframe
+code1.df$row <- as.numeric(rownames(code1.df)) #add row numbers for each value
+rle.segment <- rle.code1 #create template for code 2
+rle.segment$values <- code1.df$row #overwrite values with row numbers (for future alignment) 
+code1.segment <- inverse.rle(rle.segment) #reverse the rle to mirror COPUS format
+long.compare2 <- as.data.frame(xtabs(LA.courses$I.S.Interactive ~ code1.segment))
+long.compare3 <- as.data.frame(xtabs(LA.courses$I.vicarious ~ code1.segment))
+long.compare4 <- as.data.frame(xtabs(LA.courses$I.didactic ~ code1.segment))
+long.compare5 <- as.data.frame(xtabs(LA.courses$LA.S.Interactive ~ code1.segment))
+long.compare6 <- as.data.frame(xtabs(LA.courses$LA.Vicarious ~ code1.segment))
+long.compare7 <- as.data.frame(xtabs(LA.courses$LA.didactic ~ code1.segment))
+long.compare8 <- as.data.frame(xtabs(LA.courses$LA.1o1 ~ code1.segment))
+long.compare9 <- as.data.frame(xtabs(LA.courses$LA.Adm ~ code1.segment))
+long.compare10 <- as.data.frame(xtabs(LA.courses$LA.AnQ ~ code1.segment))
+long.compare11 <- as.data.frame(xtabs(LA.courses$LA.L ~ code1.segment))
+long.compare12 <- as.data.frame(xtabs(LA.courses$LA.LaLa ~ code1.segment))
+long.compare13 <- as.data.frame(xtabs(LA.courses$LA.LaI ~ code1.segment))
+long.compare14 <- as.data.frame(xtabs(LA.courses$LA.Lec ~ code1.segment))
+long.compare15 <- as.data.frame(xtabs(LA.courses$LA.MG ~ code1.segment))
+long.compare16 <- as.data.frame(xtabs(LA.courses$LA.O ~ code1.segment))
+long.compare17 <- as.data.frame(xtabs(LA.courses$LA.PQ ~ code1.segment))
+long.compare18 <- as.data.frame(xtabs(LA.courses$LA.RtW ~ code1.segment))
+long.compare19 <- as.data.frame(xtabs(LA.courses$LA.W ~ code1.segment))
+long.compare20 <- as.data.frame(xtabs(LA.courses$LA.Presenting ~ code1.segment))
+long.compare21 <- as.data.frame(xtabs(LA.courses$I.Presenting ~ code1.segment))
+long.compare22 <- as.data.frame(xtabs(LA.courses$LA.Guiding ~ code1.segment))
+long.compare23 <- as.data.frame(xtabs(LA.courses$I.Guiding ~ code1.segment))
+long.compare24 <- as.data.frame(xtabs(LA.courses$LA.Admin ~ code1.segment))
+long.compare25 <- as.data.frame(xtabs(LA.courses$I.Admin ~ code1.segment))
+long.compare26 <- as.data.frame(xtabs(LA.courses$LA.Other ~ code1.segment))
+long.compare27 <- as.data.frame(xtabs(LA.courses$I.Other ~ code1.segment))
+
+
+
+
+
+
+class.segment <- data.frame(segment=code1.segment, class =filter $class.period)
+class.compare <- class.segment %>% group_by(segment) %>% count()
+
+ID.lookup <- unique(LA.courses[,c("ID", "Course.ID")])
+ID.lookup$Course.de.ID <- as.numeric(factor(ID.lookup$Course.ID)) 
+
+compare.df <<- data.frame(segment.id=code1.df$row,
+                                                   Course.ID = merge(ID.lookup, data.frame(ID = class.compare$class), by = "ID")["Course.ID"],
+                         Course.de.ID = merge(ID.lookup, data.frame(ID = class.compare$class), by = "ID")["Course.de.ID"],
+
+                         class.period = class.compare$class,
+                         code1.value=code1.df$values,
+                         code1.length=code1.df$lengths,
+                         code1.min = code1.df$lengths * 2,
+                         I.S.Interactive.per=long.compare2$Freq /code1.df$lengths *100,
+                         I.vicarious.per=long.compare3$Freq /code1.df$lengths*100,
+                         I.didactic.per=long.compare4$Freq /code1.df$lengths*100,
+                         LA.S.Interactive.per=long.compare5$Freq /code1.df$lengths*100,
+                         LA.Vicarious.per=long.compare6$Freq /code1.df$lengths*100,
+                         LA.didactic.per=long.compare7$Freq /code1.df$lengths*100,
+                         LA.1o1=long.compare8$Freq /code1.df$lengths*100,
+                         LA.Adm=long.compare9$Freq /code1.df$lengths*100,
+                         LA.AnQ=long.compare10$Freq /code1.df$lengths*100,
+                         LA.L=long.compare11$Freq /code1.df$lengths*100,
+                         LA.LaLa=long.compare12$Freq /code1.df$lengths*100,
+                         LA.LaI=long.compare13$Freq /code1.df$lengths*100,
+                         LA.Lec=long.compare14$Freq /code1.df$lengths*100,
+                         LA.MG=long.compare15$Freq /code1.df$lengths*100,
+                         LA.O=long.compare16$Freq /code1.df$lengths*100,
+                         LA.PQ=long.compare17$Freq /code1.df$lengths*100,
+                         LA.RtW=long.compare18$Freq /code1.df$lengths*100,
+                         LA.W=long.compare19$Freq /code1.df$lengths*100,
+                         LA.Presenting = long.compare20$Freq /code1.df$lengths*100,
+                         I.Presenting = long.compare21$Freq /code1.df$lengths*100,
+                         LA.Guiding = long.compare22$Freq /code1.df$lengths*100,
+                         I.Guiding = long.compare23$Freq /code1.df$lengths*100,
+                         LA.Admin = long.compare24$Freq /code1.df$lengths*100,
+                         I.Admin = long.compare25$Freq /code1.df$lengths*100,
+                         LA.Other = long.compare26$Freq /code1.df$lengths*100,
+                         I.Other = long.compare27$Freq /code1.df$lengths*100
+                                                        )
+only.1 <- compare.df[which(compare.df$code1.value==1),]
+only.1
+
+}
+
+active.time <- compile.time(code1=LA.courses$S.active)
+vicarious.time <- compile.time(code1=LA.courses$S.vicarious.interactive)
+passive.time <- compile.time(code1=LA.courses$S.passive)
+s.receiving.time <- compile.time(code1=LA.courses$Only.Receiving)
+s.talk2class.time <- compile.time(code1=LA.courses$S.Only.Talking.to.class)
+s.working.time <- compile.time(code1=LA.courses$S.Only.Working)
+s.other.time <- compile.time(code1=LA.courses$S.other)
+```
+
+```{r}
+s.working.time$diff <- ifelse(s.working.time$I.Guiding == 0 & s.working.time$LA.Guiding == 0, NA, s.working.time$I.Guiding - s.working.time$LA.Guiding)
+working.short <- s.working.time[,c('segment.id', 'code1.min','Course.ID',  'Course.de.ID', "I.Guiding", "LA.Guiding", 'diff')]
+working.short$student <- "working"
+
+s.talk2class.time$diff <- ifelse(s.talk2class.time$I.Guiding == 0 & s.talk2class.time$LA.Guiding == 0, NA, s.talk2class.time$I.Guiding - s.talk2class.time$LA.Guiding)
+  
+talk2class.short <- s.talk2class.time[,c('segment.id', 'code1.min','Course.ID',  'Course.de.ID', "I.Guiding", "LA.Guiding", 'diff')]
+talk2class.short$student <- "talk2class"
+
+
+s.receiving.time$diff <- ifelse(s.receiving.time$I.Presenting == 0 & s.receiving.time$LA.Presenting == 0, NA, s.receiving.time$I.Presenting - s.receiving.time$LA.Presenting)
+
+receiving.short <- s.receiving.time[,c('segment.id', 'code1.min', 'Course.ID', 'Course.de.ID', "I.Presenting", "LA.Presenting", 'diff')]
+receiving.short$student <- "receiving"
+
+
+
+segment.facilitator <- rbind.fill(working.short, talk2class.short, receiving.short)
+
+mean_diff <- aggregate(diff ~ Course.de.ID * student, data = segment.facilitator, mean)
+colnames(mean_diff)[which(colnames(mean_diff) == "diff")] <- "mean"
+
+merged.sf <- merge(segment.facilitator, mean_diff, by = c("Course.de.ID", "student"))
+
+
+
+p.balance <- ggplot(segment.facilitator, aes(y = diff, x=0)) +
+  geom_boxplot() +
+  facet_grid(student ~ as.factor(Course.de.ID)) +
+  theme_par()
+
+
+
+p.balance <- ggplot(merged.sf, aes(x = diff, y = 0)) +
+  geom_violin(aes(fill = mean)) +
+  facet_grid(as.factor(Course.de.ID) ~ student, switch = "both", labeller = labeller(student = c("receiving" = "Who is presenting when\n students are receiving information?", "talk2class" = "Who is guiding when\n students are talking to the class?", "working" = "Who is guiding when\n students are working?")))  +
+  scale_fill_gradientn(colors = c("darkorange2", "white", "deepskyblue4"), values = scales::rescale(c(-100,-50, 0, 50, 100)), breaks = c(-100, 0, 100), labels = c("Learning Assistant", "Balanced", "Instructor"), limits = c(-100, 100)) +
+  xlab("Difference in the percent of time facilitating an activity \n(Instructor % - Learning Assistant %)") +
+  ylab("Course ID")+
+  labs(fill = NULL)+
+  theme( axis.ticks.y = element_blank(), axis.text.y = element_blank()) +
+    theme(panel.grid.major.y = element_line(color = "white", linetype = "dashed"), panel.grid.minor.y = element_blank(),
+         panel.spacing.x = unit(1.5, "lines"),  strip.text.y.left = element_text(angle = 0))+
+  scale_y_continuous(breaks=c(0), minor_breaks=NULL) +
+   theme(legend.position="top", legend.direction = "horizontal", legend.title.align = 0.5, legend.text.align = 0.5, legend.box.just = "center", legend.key.height = unit(.5, "cm"), legend.key.width = unit(1.5, "cm"), legend.key.size = unit(0.5, "cm"), legend.margin = margin(t = 0, r = 0, b = 0, l = 0), legend.text = element_text(angle = 0))
+  
+ggsave("balance of instruction.pdf", plot = p.balance, device = "pdf", width = 8.5, height = 11, units = "in")
+ggsave("balance of instruction.png", plot = p.balance, device = "png", width = 8, height = 9.5, units = "in")
+  
+  
+
+p.balance <- ggplot(merged.sf, aes(x = diff, y = 0)) +
+  geom_violin(aes(fill = mean)) +
+  facet_grid(as.factor(Course.ID) ~ student, switch = "both", labeller = labeller(student = c("receiving" = "Who is presenting when\n students are receiving information?", "talk2class" = "Who is guiding when\n students are talking to the class?", "working" = "Who is guiding when\n students are working?")))  +
+  scale_fill_gradientn(colors = c("darkorange2", "white", "deepskyblue4"), values = scales::rescale(c(-100,-50, 0, 50, 100)), breaks = c(-100, 0, 100), labels = c("Learning Assistant", "Balanced", "Instructor"), limits = c(-100, 100)) +
+  xlab("Difference in the percent of time facilitating an activity \n(Instructor % - Learning Assistant %)") +
+  ylab("Course ID")+
+  labs(fill = NULL)+
+  theme( axis.ticks.y = element_blank(), axis.text.y = element_blank()) +
+    theme(panel.grid.major.y = element_line(color = "white", linetype = "dashed"), panel.grid.minor.y = element_blank(),
+         panel.spacing.x = unit(1.5, "lines"),  strip.text.y.left = element_text(angle = 0))+
+  scale_y_continuous(breaks=c(0), minor_breaks=NULL) +
+   theme(legend.position="top", legend.direction = "horizontal", legend.title.align = 0.5, legend.text.align = 0.5, legend.box.just = "center", legend.key.height = unit(1, "cm"), legend.key.width = unit(1.5, "cm"), legend.key.size = unit(0.5, "cm"), legend.margin = margin(t = 0, r = 0, b = 0, l = 0), legend.text = element_text(angle = 0))
+  
+ggsave("BEYOND - balance of instruction.pdf", plot = p.balance, device = "pdf", width = 8.5, height = 11, units = "in")
+  
+```
+
+```{r}
+s.working.time$diff <-  s.working.time$I.Guiding - s.working.time$LA.Guiding
+working.short <- s.working.time[,c('segment.id', 'code1.min','Course.ID', 'Course.de.ID', "I.Guiding", "LA.Guiding", 'diff')]
+working.short$student <- "working"
+colnames(working.short)[colnames(working.short) %in% c("I.Guiding", "LA.Guiding")] <- c("Instructor", "Learning Assistant")
+
+s.talk2class.time$diff <- s.talk2class.time$I.Guiding - s.talk2class.time$LA.Guiding
+talk2class.short <- s.talk2class.time[,c('segment.id', 'code1.min', 'Course.ID','Course.de.ID', "I.Guiding", "LA.Guiding", 'diff')]
+talk2class.short$student <- "talk2class"
+colnames(talk2class.short)[colnames(talk2class.short) %in% c("I.Guiding", "LA.Guiding")] <- c("Instructor", "Learning Assistant")
+
+
+s.receiving.time$diff <- s.receiving.time$I.Presenting - s.receiving.time$LA.Presenting
+receiving.short <- s.receiving.time[,c('segment.id', 'code1.min', 'Course.ID','Course.de.ID', "I.Presenting", "LA.Presenting", 'diff')]
+receiving.short$student <- "receiving"
+colnames(receiving.short)[colnames(receiving.short) %in% c("I.Presenting", "LA.Presenting")] <- c("Instructor", "Learning Assistant")
+
+
+activity.facilitator <- rbind.fill(working.short, talk2class.short, receiving.short)
+
+results <- data.frame()
+results <- data.frame()
+
+for (i in unique(activity.facilitator$Course.de.ID)) {
+  for (j in unique(activity.facilitator$student)) {
+    temp <- subset(activity.facilitator, Course.de.ID == unique(activity.facilitator$Course.de.ID)[i] & student == unique(activity.facilitator$student)[j])
+    temp <- na.omit(temp)
+    tryCatch({
+      estimate <- cor.test(temp$Instructor, temp$`Learning Assistant`, method = "kendall", exact = F)$estimate
+      interval <- cor.test(activity.facilitator$Instructor, activity.facilitator$`Learning Assistant`, method = "kendall", conf.level = 0.95, exact = F)$conf.int
+      results <- rbind(results, data.frame(Course.de.ID = i, student = j, estimate = estimate, interval = interval))
+    }, error = function(e) {
+      # Do nothing and continue to the next combination
+    })
+  }
+}
+
+results
+
+
+
+merged.sf <- merge(activity.facilitator, mean_diff, by = c("Course.de.ID", "student"))
+
+
+
+p.balance <- ggplot(activity.facilitator, aes(y = diff, x=0)) +
+  geom_boxplot() +
+  facet_grid(student ~ as.factor(Course.de.ID)) +
+  theme_par()
+
+
+
+p.balance <- ggplot(merged.sf, aes(x = diff, y = 0)) +
+  geom_violin(aes(fill = mean)) +
+  facet_grid(as.factor(Course.de.ID) ~ student, switch = "both", labeller = labeller(student = c("receiving" = "Who is presenting when\n students are receiving information?", "talk2class" = "Who is guiding when\n students are talking to the class?", "working" = "Who is guiding when\n students are working?")))  +
+  scale_fill_gradient2(low = "darkorange2", mid = "white", high = "deepskyblue4", midpoint = 0, limits = c(-100, 100)) +
+  theme_clean() + 
+  xlab("Difference in the percent of time facilitating an activity \n(Instructor % - Learning Assistant %)") +
+  ylab("Course ID")+
+  theme( axis.ticks.y = element_blank(), axis.text.y = element_blank()) +
+    theme(panel.grid.major.y = element_line(color = "gray", linetype = "dashed"), panel.grid.minor.y = element_blank(),
+         panel.spacing.x = unit(1.5, "lines"))+
+  scale_y_continuous(breaks=c(0), minor_breaks=NULL)
+
+ggsave("activity spearman.pdf", plot = p.balance, device = "pdf", width = 8.5, height = 11, units = "in")
+  
+
+```
+
+
+
+```{r}
+library(gplots)
+library(ggridges)
+
+
+s.working_long <-  s.working.time %>%
+  pivot_longer(colnames(s.working.time)[-c(1:5)], names_to = "code", values_to = "percent")
+
+s.working_long$type <- str_extract(s.working_long$code, "[^.]+")
+s.working_long$collapsed <- sub(".*\\.", "", s.working_long$code)
+
+ggplot(s.talk2class_long, aes(x = percent, y = as.factor(code), fill = type)) +
+  geom_density_ridges(alpha=0.6, stat="binline", bins=20) +
+  # geom_density_ridges() +
+  theme_ridges() + 
+  theme(legend.position = "none")+
+  ylab ("Number of class segments \nwhere students are working") +
+  xlab("The percent of time spend guiding")
+
+
+p.w <- ggplot(s.working_long[grepl("Guiding", s.working_long$code),], aes(x = percent, fill = type)) +
+  geom_histogram(color="#e9ecef", alpha=0.4, position = 'identity', bins = 20)+
+  scale_fill_manual(values=c("#FF000080", "#0000FF80")) +
+  ylab ("Number of class segments \nwhere students are \nworking") +
+  xlab("Time spent guiding (%) ")+
+  facet_wrap( ~ type, ncol = 1)+
+  theme_par()
+
+s.talk2class_long <-  s.talk2class.time %>%
+  pivot_longer(colnames(s.talk2class.time)[-c(1:5)], names_to = "code", values_to = "percent")
+
+s.talk2class_long$type <- str_extract(s.talk2class_long$code, "[^.]+")
+s.talk2class_long$collapsed <- sub(".*\\.", "", s.talk2class_long$code)
+
+p.t <- ggplot(s.talk2class_long[grepl("Guiding", s.talk2class_long$code),], aes(x = percent, fill = type)) +
+  geom_histogram(color="#e9ecef", alpha=0.4, position = 'identity', bins = 20)+
+  scale_fill_manual(values=c("#FF000080", "#0000FF80")) +
+  ylab ("Number of class segments \nwhere students are \ntalking to the class") +
+  xlab("Time spent guiding (%) ")+
+  facet_wrap( ~ type, ncol = 1)+
+  theme_par()
+
+s.receiving_long <-  s.receiving.time %>%
+  pivot_longer(colnames(s.receiving.time)[-c(1:5)], names_to = "code", values_to = "percent")
+
+s.receiving_long$type <- str_extract(s.receiving_long$code, "[^.]+")
+s.receiving_long$collapsed <- sub(".*\\.", "", s.receiving_long$code)
+
+p.r <- ggplot(s.receiving_long[grepl("Presenting|Guiding|Admin|Other", s.receiving_long$code),], aes(x = percent, fill = type)) +
+  geom_histogram(color="#e9ecef", alpha=0.4, position = 'identity', bins = 20)+
+  scale_fill_manual(values=c("#FF000080", "#0000FF80")) +
+  ylab ("Number of class segments \nwhere students are \nlistening") +
+  xlab("Time spent presenting (%) ")+
+  facet_wrap( ~ code, ncol = 1)+
+  theme_par()
+
+#Zero-One Inflated Beta Models
+#https://rdrr.io/cran/gamlss.dist/man/BEZI.html
+
+ggsave('histogram percent of time - facet.png', grid.arrange(p.r,p.t,p.w, nrow=3), width = 6, height = 15, limitsize = F)
+
+
+```
+
+```{r}
+library(gplots)
+
+type1 <- c('ivory', '#FEA885','#FE966b','#FD8452', '#FD7239','#FD6020', '#FC4E07',"#e74502") #red
+type2 <- c('ivory', '#ffe065','#ffdb4b','#ffd632', '#ffd118','#fecb00', '#e4b700',"#cba200") #yellow
+type3 <- c('ivory', '#08efff','#00dfee','#00c7d5', '#00afbb','#0097a2', '#007f88',"#00676f") #blue
+
+
+col.LAI.id <- c("I.Presenting", "LA.Presenting","I.Guiding", "LA.Guiding","I.Admin","LA.Admin", "I.Other","LA.Other")
+
+heatmap(x=as.matrix(s.receiving.time[order(s.receiving.time$code1.min),col.LAI.id]),
+        Rowv = NA,
+        labRow = s.receiving.time$code1.min[order(s.receiving.time$code1.min)], 
+        col=type1)
+heatmap(x=as.matrix(s.talk2class.time[order(s.talk2class.time$code1.min),col.LAI.id]),
+        Rowv = NA,
+        labRow = s.talk2class.time$code1.min[order(s.talk2class.time$code1.min)], 
+        col=type2)
+heatmap(x=as.matrix(s.working.time[order(s.working.time$code1.min),col.LAI.id]),
+        Rowv = NA,
+        labRow = s.working.time$code1.min[order(s.working.time$code1.min)], 
+        col=type3)
+
+#the cluster names are representative of the class period but this does not mean that this is exclusively occurring
+#students receive instruction and internalize the information 
+# to me passive means that students arn't doing anything but listen to instruction
+
+
+png('passive.histogram.png', width = 4.25, height = 4.25, units = 'in', res = 600)
+heatmap.2(x=as.matrix(s.receiving.time[order(s.receiving.time$code1.min),col.LAI.id]),
+          Colv = col.LAI.id,
+          dendrogram = 'none',
+          labRow = NA, 
+        col=type1,
+        trace = 'none',
+        density.info = 'none',
+        keysize = 1.5,
+        cexCol = 1,
+        margins = c(8, 3),
+        lhei = c(1,3.25),
+        lwid = c(1,2.25),
+        key.par = list(mar=c(2.5,0.5,2.5,0.5)),
+        key.xlab = '% of \n segement duration',
+        ylab = paste0("Unique segments of students continiously \nreceiving information (n = ", nrow(s.receiving.time), ')'),
+        xlab = "Instructional behaviors"
+        #main = 'Students Receiving Information'
+        )
+dev.off()
+
+#to me vicarious lecture means that the entire class is listening/learning through peers (whole class discussion, student question follow up, instructor posing question, student asking question, student presentations, instructor conducting a demonstration)
+#this in not necessarily the same as an interactive lecture
+png('vicarious.histogram.png',  width = 4.25, height = 4.25, units = 'in', res = 600)
+heatmap.2(x=as.matrix(s.talk2class.time[order(s.talk2class.time$code1.min),col.LAI.id]),
+                  Colv = col.LAI.id,
+          dendrogram = 'none',
+          labRow = NA, 
+        col=type2,
+        trace = 'none',
+        density.info = 'none',
+        keysize = 1.5,
+        cexCol = 1,
+        margins = c(8, 3),
+        lhei = c(1,3.25),
+        lwid = c(1,2.25),
+        key.par = list(mar=c(2.5,0.5,2.5,0.5)),
+        key.xlab = '% of \ncontinuous segement',
+        ylab = paste0("Unique segments of students continiously \ntalking to the class (n = ", nrow(s.talk2class.time), ')'),
+        xlab = "Instructional behaviors"
+        #main = 'Students Talking to the Class'
+        )
+dev.off()
+
+#student centered could be individual problem solving, clicker group, working group, other group activity, making a prediction
+png('active.histogram.png',  width = 4.25, height = 4.25, units = 'in', res = 600)
+heatmap.2(x=as.matrix(s.working.time[order(s.working.time$code1.min),col.LAI.id]),
+                  Colv = col.LAI.id,
+          dendrogram = 'none',
+          labRow = NA,
+        col=type3,
+        trace = 'none',
+        density.info = 'none',
+        keysize = 1.5,
+        cexCol = 1,
+        margins = c(8, 3),
+        lhei = c(1,3.25),
+        lwid = c(1,2.25),
+        key.par = list(mar=c(2.5,0.5,2.5,0.5)),
+        key.xlab = '% of \ncontinuous segement',
+        ylab = paste0("Unique segments of students continiously \n working (n = ", nrow(s.working.time), ')'),
+        xlab = "Instructional behaviors"
+        #main = 'Students Working'
+        )
+dev.off()
+```
+
+```{r}
+segments.comb <- rbind(s.receiving.time, s.talk2class.time, s.working.time)
+segments.comb$type <- c(rep('s.receiving.time', nrow(s.receiving.time)),
+                        rep('s.talk2class.time', nrow(s.talk2class.time)),
+                        rep('s.working.time', nrow(s.working.time)))
+
+segment.long <- gather(data=segments.comb[c(col.LAI.id, 'type')], key = 'Code', value = 'Percent', col.LAI.id)
+segment.long$Code <- ordered(segment.long$Code, levels =c(col.LAI.id))
+box.segment <- ggplot(data = segment.long, aes(x=Code, y=Percent, fill=type))+
+  geom_boxplot()+
+  #geom_violin()+
+  #geom_point()+
+  scale_fill_manual(values = type.colors, labels = c("Students Receiving Information", 'Students Talking to Class', 'Students Working'), name = NULL)+
+  #facet_grid(type ~ .)+
+  theme_par()+ 
+  theme(legend.position="bottom")
+
+ggsave(paste0("Segment boxplot.png"), box.segment, width = 14, height = 6, device='png', limitsize = F)
+```
+
+
+
+
+```{r}
+plot.time <- function(df,
+                      i.code = 'I.S.Interactive.per' ,
+                      la.code ='LA.S.Interactive.per',
+                      code1.lab= "Length of individual activities (min)",
+                      code2.lab= 'Percent of activity spent\n interacting with students (%)',
+                      legend = T){
+interactive.long <- reshape(data=df[,c('segment.id','code1.min',i.code, la.code)], idvar = c('segment.id','code1.min'),v.names = 'percent', varying = c( i.code, la.code), direction = 'long')
+#vicarious.long <-
+#didactic.long <-
+
+p0 <- ggplot(interactive.long, aes(x=code1.min, y=percent, color=as.factor(time))) +
+    geom_point(alpha=0.75) +
+    #geom_smooth(method = 'glm')+
+    #geom_smooth()+
+    #geom_abline(slope = 1, intercept = 0, linetype="dashed")+
+    xlab(code1.lab)+
+    ylab(code2.lab)+
+    #xlim(0,max(c(only.1$code1.min, only.1$code2.min)))+
+    #ylim(0,max(c(only.1$code1.min, only.1$code2.min)))+
+  scale_color_brewer(palette='Set1',name = NULL, labels = c("Instructor", "LA"))+
+  guides(color = guide_legend(override.aes = list(alpha = 1, size=3) ) )+
+  theme_par()
+
+ p1 <-  if(legend==T){p0 + theme(legend.position="left")} else{
+     p0 + theme(legend.position="none")}
+  
+
+# with marginal histogram
+p2 <- ggMarginal(p1, type="density", groupFill = T, alpha=.75)
+p2
+}
+si <- plot.time(df=active.time, i.code = 'I.S.Interactive.per', la.code ='LA.S.Interactive.per', legend = F)
+sv <- plot.time(df=vicarious.time, i.code = 'I.vicarious.per', la.code ='LA.Vicarious.per', code1.lab = 'Length of periods of interactive learning (min)\n (e.g., clicker questions, student questions)', code2.lab = 'Percent of interactive learning period spent\n contributing to the conversation (%)\n (e.g., clicker questions, student questions', legend = F)
+sd <- plot.time(df=passive.time, i.code = 'I.didactic.per', la.code ='LA.didactic.per', code1.lab = 'Length of periods of passive learning (min)\n (e.g., listening to instruction)', code2.lab = 'Percent of lecture time spent\n leading the conversation (%)\n (e.g., lecturing, real-time writing, demonstration, video', legend = T)
+
+ggsave('length.png', grid.arrange(sd,sv,si, nrow=1, widths=c(1.3,1,1)), width = 16, height = 6, limitsize = F)
+
+```
+
+Correlations with LA/Instructor Activity
+```{r}
+library(pscl)
+zip <- zeroinfl(data = only.1, formula = code2.min ~ code1.min, dist = "poisson", link = "logit")
+summary(zip)
+
+mean(only.1$percentage)
+
+exp(zip$coefficients$count[2])
+
+glm(code2.min ~ code1.min, data=only.1, family = 'poisson')
+
+lm(LA.courses$S.active ~ 1+ LA.courses$LA.Instructor.like)
+library(MASS)
+library(Rfast2)
+library(ZIDW)
+
+#exp(α)= effect on the mean μ, when X = 0
+#exp(β) = with every unit increase in X, the predictor variable has multiplicative effect of exp(β) on the mean of Y, that is μ
+
+```
+
